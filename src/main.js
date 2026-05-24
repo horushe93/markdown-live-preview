@@ -2,6 +2,7 @@ import Storehouse from 'storehouse-js';
 import * as monaco from 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/+esm';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import mermaid from 'mermaid';
 
 const init = () => {
     let hasEdited = false;
@@ -12,6 +13,8 @@ const init = () => {
     const localStorageScrollBarKey = 'scroll_bar_settings';
     const localStorageThemeKey = 'theme_settings';
     const confirmationMessage = 'Are you sure you want to reset? Your changes will be lost.';
+    let mermaidRenderTimer = null;
+    let mermaidRenderVersion = 0;
     // default template
     const defaultInput = `# Markdown syntax guide
 
@@ -138,15 +141,117 @@ This web site is using ${"`"}markedjs/marked${"`"}.
         return editor;
     };
 
+    let escapeHtml = (value) => {
+        return value
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    };
+
+    let createMarkedRenderer = () => {
+        const renderer = new marked.Renderer();
+        const renderCode = renderer.code.bind(renderer);
+
+        renderer.code = (token) => {
+            const lang = (token.lang || '').match(/^\S*/)?.[0].toLowerCase();
+            if (lang !== 'mermaid') {
+                return renderCode(token);
+            }
+
+            return `<pre class="mermaid">${escapeHtml(token.text)}</pre>\n`;
+        };
+
+        return renderer;
+    };
+
+    let configureMermaid = (theme) => {
+        mermaid.initialize({
+            startOnLoad: false,
+            securityLevel: 'strict',
+            theme
+        });
+    };
+
+    let showMermaidError = (element, error) => {
+        const message = error && error.message ? error.message : 'Unable to render Mermaid chart.';
+        element.classList.add('mermaid-error');
+        element.textContent = `Mermaid render error: ${message}`;
+    };
+
+    let getMermaidTheme = () => {
+        return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'default';
+    };
+
+    let renderMermaidDiagramsNow = async (theme = getMermaidTheme()) => {
+        const outputElement = document.querySelector('#output');
+        if (!outputElement) {
+            return;
+        }
+
+        const version = ++mermaidRenderVersion;
+        configureMermaid(theme);
+
+        const elements = Array.from(outputElement.querySelectorAll('.mermaid'));
+        for (const [index, element] of elements.entries()) {
+            if (version !== mermaidRenderVersion) {
+                return;
+            }
+
+            const source = element.dataset.mermaidSource || element.textContent;
+            element.dataset.mermaidSource = source;
+            element.classList.remove('mermaid-error');
+
+            try {
+                const renderId = `mermaid-${Date.now()}-${version}-${index}`;
+                const { svg, bindFunctions } = await mermaid.render(renderId, source);
+                if (version !== mermaidRenderVersion) {
+                    return;
+                }
+                element.innerHTML = svg;
+                if (typeof bindFunctions === 'function') {
+                    bindFunctions(element);
+                }
+            } catch (error) {
+                showMermaidError(element, error);
+            }
+        }
+    };
+
+    let scheduleMermaidRender = () => {
+        if (mermaidRenderTimer) {
+            clearTimeout(mermaidRenderTimer);
+        }
+
+        mermaidRenderTimer = setTimeout(() => {
+            mermaidRenderTimer = null;
+            renderMermaidDiagramsNow();
+        }, 150);
+    };
+
+    let renderMermaidDiagrams = (theme) => {
+        if (mermaidRenderTimer) {
+            clearTimeout(mermaidRenderTimer);
+            mermaidRenderTimer = null;
+        }
+
+        return renderMermaidDiagramsNow(theme);
+    };
+
+    let renderer = createMarkedRenderer();
+
     // Render markdown text as html
     let convert = (markdown) => {
         let options = {
             headerIds: false,
-            mangle: false
+            mangle: false,
+            renderer
         };
         let html = marked.parse(markdown, options);
         let sanitized = DOMPurify.sanitize(html);
         document.querySelector('#output').innerHTML = sanitized;
+        scheduleMermaidRender();
     };
 
     // Reset input text
@@ -234,6 +339,7 @@ This web site is using ${"`"}markedjs/marked${"`"}.
             if (monaco && monaco.editor && typeof monaco.editor.setTheme === 'function') {
                 monaco.editor.setTheme(checked ? 'vs-dark' : 'vs');
             }
+            renderMermaidDiagrams();
         });
     };
 
@@ -303,7 +409,9 @@ This web site is using ${"`"}markedjs/marked${"`"}.
             return;
         }
 
-        getLightMarkdownCss().then((lightCss) => {
+        const restoreDarkMermaid = getMermaidTheme() === 'dark';
+
+        renderMermaidDiagrams('default').then(() => getLightMarkdownCss()).then((lightCss) => {
             const options = {
                 margin: 10,
                 filename: 'markdown-preview.pdf',
@@ -357,6 +465,11 @@ This web site is using ${"`"}markedjs/marked${"`"}.
                 .catch((error) => {
                     // eslint-disable-next-line no-console
                     console.error('Failed to export PDF', error);
+                })
+                .finally(() => {
+                    if (restoreDarkMermaid) {
+                        renderMermaidDiagrams();
+                    }
                 });
         });
     };

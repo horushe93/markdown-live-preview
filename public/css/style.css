@@ -148,6 +148,29 @@ footer {
   white-space: normal;
 }
 
+.markdown-body .mermaid {
+  overflow-x: auto;
+  padding: 16px;
+  text-align: center;
+}
+
+.markdown-body .mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.markdown-body .mermaid-error {
+  color: #cf222e;
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+[data-theme="dark"] .markdown-body .mermaid-error {
+  color: #ff7b72;
+}
+
 .split-container {
   display: flex;
   height: 100%;
