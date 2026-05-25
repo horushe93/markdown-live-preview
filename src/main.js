@@ -414,7 +414,7 @@ const init = async () => {
         let last = Storehouse.getItem(localStorageNamespace, localStorageThemeKey);
         if (last === null || last === undefined) {
             try {
-                const raw = localStorage.getItem('com.markdownlivepreview_theme');
+                const raw = localStorage.getItem('theme');
                 if (raw === 'dark') return true;
                 if (raw === 'light') return false;
             } catch (e) { /* ignore */ }
@@ -431,7 +431,7 @@ const init = async () => {
         let expiredAt = new Date(2099, 1, 1);
         Storehouse.setItem(localStorageNamespace, localStorageThemeKey, settings, expiredAt);
         try {
-            localStorage.setItem('com.markdownlivepreview_theme', settings ? 'dark' : 'light');
+            localStorage.setItem('theme', settings ? 'dark' : 'light');
         } catch (e) { /* ignore storage errors */ }
     };
 
