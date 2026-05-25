@@ -218,7 +218,6 @@ async function handleContextMenu(nodeId, x, y) {
             }
             deleteNode(currentState, nodeId);
             if (isOpenFile) {
-                currentState.activeFileId = nextFile;
                 currentState.contextDirId = nextFile
                     ? currentState.nodes[nextFile]?.parentId || null
                     : null;
@@ -312,7 +311,6 @@ function handleKeydown(e) {
         }
 
         deleteNode(currentState, activeId);
-        currentState.activeFileId = nextFile;
         currentState.contextDirId = nextFile
             ? currentState.nodes[nextFile]?.parentId || null
             : null;
