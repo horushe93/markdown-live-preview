@@ -1,0 +1,36 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "shell",
+      "command": "./scripts/run.sh dev",
+      "label": "📝🧑‍💻 [dev]",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "type": "shell",
+      "command": "./scripts/run.sh build",
+      "label": "📝📦 [build]",
+      "group": {
+        "kind": "build"
+      }
+    },
+    {
+      "label": "📝📋 [warp cmd]",
+      "type": "shell",
+      // 在容器内获取自己的 ID (hostname)，然后拼接成 docker exec 命令
+      // 这里的 echo 命令会把结果输出到终端，你需要手动复制
+      "command": "echo \"docker exec -it --user 'node' -w '${workspaceFolder}' $(hostname) /bin/bash\" && echo '\n✅ 命令已生成，请复制上方命令去 Warp 执行'",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "focus": true,
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
