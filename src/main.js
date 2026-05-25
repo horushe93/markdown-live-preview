@@ -1,153 +1,22 @@
 import Storehouse from 'storehouse-js';
-import * as monaco from 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/+esm';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
+import { setupEditor, getValue, setValue, setTheme, isMonacoAvailable } from './editor';
+import { loadFileSystem, saveFileSystem, updateFileContent, getActiveFile } from './storage';
+import { initSidebar, updateState, refreshSidebar } from './sidebar';
+import { WELCOME_FILE_ID, DEFAULT_MARKDOWN } from './constants';
 
-const init = () => {
+const init = async () => {
     let hasEdited = false;
     let scrollBarSync = false;
 
     const localStorageNamespace = 'com.markdownlivepreview';
-    const localStorageKey = 'last_state';
     const localStorageScrollBarKey = 'scroll_bar_settings';
     const localStorageThemeKey = 'theme_settings';
     const confirmationMessage = 'Are you sure you want to reset? Your changes will be lost.';
     let mermaidRenderTimer = null;
     let mermaidRenderVersion = 0;
-    // default template
-    const defaultInput = `# Markdown syntax guide
-
-## Headers
-
-# This is a Heading h1
-## This is a Heading h2
-###### This is a Heading h6
-
-## Emphasis
-
-*This text will be italic*  
-_This will also be italic_
-
-**This text will be bold**  
-__This will also be bold__
-
-_You **can** combine them_
-
-## Lists
-
-### Unordered
-
-* Item 1
-* Item 2
-* Item 2a
-* Item 2b
-    * Item 3a
-    * Item 3b
-
-### Ordered
-
-1. Item 1
-2. Item 2
-3. Item 3
-    1. Item 3a
-    2. Item 3b
-
-## Images
-
-![This is an alt text.](/image/Markdown-mark.svg "This is a sample image.")
-
-## Links
-
-You may be using [Markdown Live Preview](https://markdownlivepreview.com/).
-
-## Blockquotes
-
-> Markdown is a lightweight markup language with plain-text-formatting syntax, created in 2004 by John Gruber with Aaron Swartz.
->
->> Markdown is often used to format readme files, for writing messages in online discussion forums, and to create rich text using a plain text editor.
-
-## Tables
-
-| Left columns  | Right columns |
-| ------------- |:-------------:|
-| left foo      | right foo     |
-| left bar      | right bar     |
-| left baz      | right baz     |
-
-## Blocks of code
-
-${"`"}${"`"}${"`"}
-let message = 'Hello world';
-alert(message);
-${"`"}${"`"}${"`"}
-
-## Mermaid diagrams
-${"`"}${"`"}${"`"}mermaid
-graph TD
-  A[Start] --> B{Decision}
-  B -->|Yes| C[Finish]
-  B -->|No| D[Alternate]
-${"`"}${"`"}${"`"}
-
-## Inline code
-
-This web site is using ${"`"}markedjs/marked${"`"}.
-`;
-
-    self.MonacoEnvironment = {
-        getWorker(_, label) {
-            return new Proxy({}, { get: () => () => { } });
-        }
-    }
-
-    let setupEditor = () => {
-        let editor = monaco.editor.create(document.querySelector('#editor'), {
-            fontSize: 14,
-            language: 'markdown',
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-            scrollbar: {
-                vertical: 'visible',
-                horizontal: 'visible'
-            },
-            wordWrap: 'on',
-            hover: { enabled: false },
-            quickSuggestions: false,
-            suggestOnTriggerCharacters: false,
-            folding: false
-        });
-
-        editor.onDidChangeModelContent(() => {
-            let changed = editor.getValue() != defaultInput;
-            if (changed) {
-                hasEdited = true;
-            }
-            let value = editor.getValue();
-            convert(value);
-            saveLastContent(value);
-        });
-
-        editor.onDidScrollChange((e) => {
-            if (!scrollBarSync) {
-                return;
-            }
-
-            const scrollTop = e.scrollTop;
-            const scrollHeight = e.scrollHeight;
-            const height = editor.getLayoutInfo().height;
-
-            const maxScrollTop = scrollHeight - height;
-            const scrollRatio = scrollTop / maxScrollTop;
-
-            let previewElement = document.querySelector('#preview');
-            let targetY = (previewElement.scrollHeight - previewElement.clientHeight) * scrollRatio;
-            previewElement.scrollTo(0, targetY);
-        });
-
-        return editor;
-    };
 
     let escapeHtml = (value) => {
         return value
@@ -167,7 +36,6 @@ This web site is using ${"`"}markedjs/marked${"`"}.
             if (lang !== 'mermaid') {
                 return renderCode(token);
             }
-
             return `<pre class="mermaid">${escapeHtml(token.text)}</pre>\n`;
         };
 
@@ -194,18 +62,14 @@ This web site is using ${"`"}markedjs/marked${"`"}.
 
     let renderMermaidDiagramsNow = async (theme = getMermaidTheme()) => {
         const outputElement = document.querySelector('#output');
-        if (!outputElement) {
-            return;
-        }
+        if (!outputElement) return;
 
         const version = ++mermaidRenderVersion;
         configureMermaid(theme);
 
         const elements = Array.from(outputElement.querySelectorAll('.mermaid'));
         for (const [index, element] of elements.entries()) {
-            if (version !== mermaidRenderVersion) {
-                return;
-            }
+            if (version !== mermaidRenderVersion) return;
 
             const source = element.dataset.mermaidSource || element.textContent;
             element.dataset.mermaidSource = source;
@@ -214,9 +78,7 @@ This web site is using ${"`"}markedjs/marked${"`"}.
             try {
                 const renderId = `mermaid-${Date.now()}-${version}-${index}`;
                 const { svg, bindFunctions } = await mermaid.render(renderId, source);
-                if (version !== mermaidRenderVersion) {
-                    return;
-                }
+                if (version !== mermaidRenderVersion) return;
                 element.innerHTML = svg;
                 if (typeof bindFunctions === 'function') {
                     bindFunctions(element);
@@ -228,10 +90,7 @@ This web site is using ${"`"}markedjs/marked${"`"}.
     };
 
     let scheduleMermaidRender = () => {
-        if (mermaidRenderTimer) {
-            clearTimeout(mermaidRenderTimer);
-        }
-
+        if (mermaidRenderTimer) clearTimeout(mermaidRenderTimer);
         mermaidRenderTimer = setTimeout(() => {
             mermaidRenderTimer = null;
             renderMermaidDiagramsNow();
@@ -243,13 +102,11 @@ This web site is using ${"`"}markedjs/marked${"`"}.
             clearTimeout(mermaidRenderTimer);
             mermaidRenderTimer = null;
         }
-
         return renderMermaidDiagramsNow(theme);
     };
 
     let renderer = createMarkedRenderer();
 
-    // Render markdown text as html
     let convert = (markdown) => {
         let options = {
             headerIds: false,
@@ -262,114 +119,117 @@ This web site is using ${"`"}markedjs/marked${"`"}.
         scheduleMermaidRender();
     };
 
-    // Reset input text
-    let reset = () => {
-        let changed = editor.getValue() != defaultInput;
-        if (hasEdited || changed) {
-            var confirmed = window.confirm(confirmationMessage);
-            if (!confirmed) {
-                return;
-            }
+    // ----- File system state -----
+    let fileState = await loadFileSystem();
+    let saveTimer = null;
+
+    let saveCurrentFile = () => {
+        const activeFile = getActiveFile(fileState);
+        if (!activeFile) return;
+        const content = getValue(editor);
+        updateFileContent(fileState, activeFile.id, content);
+        scheduleSave();
+    };
+
+    let scheduleSave = () => {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            saveTimer = null;
+            saveFileSystem(fileState);
+        }, 300);
+    };
+
+    let loadFileContent = () => {
+        const activeFile = getActiveFile(fileState);
+        const content = activeFile ? activeFile.content : '';
+        setValue(editor, content);
+        convert(content);
+        hasEdited = false;
+    };
+
+    // ----- Editor setup -----
+    let editor = setupEditor(document.querySelector('#editor'));
+
+    editor.onDidChangeModelContent(() => {
+        hasEdited = true;
+        let value = getValue(editor);
+        convert(value);
+        const activeFile = getActiveFile(fileState);
+        if (activeFile) {
+            updateFileContent(fileState, activeFile.id, value);
+            scheduleSave();
         }
-        presetValue(defaultInput);
+    });
+
+    editor.onDidScrollChange((e) => {
+        if (!scrollBarSync) return;
+
+        const scrollTop = e.scrollTop;
+        const scrollHeight = e.scrollHeight;
+        const height = editor.getLayoutInfo().height;
+
+        const maxScrollTop = scrollHeight - height;
+        const scrollRatio = scrollTop / maxScrollTop;
+
+        let previewElement = document.querySelector('#preview');
+        let targetY = (previewElement.scrollHeight - previewElement.clientHeight) * scrollRatio;
+        previewElement.scrollTo(0, targetY);
+    });
+
+    // ----- Sidebar init -----
+    loadFileContent();
+
+    initSidebar(fileState, {
+        onFileSelect(fileId) {
+            saveCurrentFile();
+            const node = fileState.nodes[fileId];
+            if (!node || node.type !== 'file') return;
+            fileState.activeFileId = fileId;
+            loadFileContent();
+            updateState(fileState);
+        },
+        onTreeChange(state) {
+            fileState = state;
+        }
+    });
+
+    // flush any pending save before page unload
+    window.addEventListener('beforeunload', () => {
+        saveCurrentFile();
+        if (saveTimer) {
+            clearTimeout(saveTimer);
+            saveFileSystem(fileState);
+        }
+    });
+
+    // ----- Reset button -----
+    let reset = () => {
+        if (hasEdited) {
+            var confirmed = window.confirm(confirmationMessage);
+            if (!confirmed) return;
+        }
+        const activeFile = getActiveFile(fileState);
+        if (activeFile) {
+            const resetContent = activeFile.id === WELCOME_FILE_ID ? DEFAULT_MARKDOWN : '';
+            updateFileContent(fileState, activeFile.id, resetContent);
+            loadFileContent();
+            saveFileSystem(fileState);
+        }
         document.querySelectorAll('.column').forEach((element) => {
             element.scrollTo({ top: 0 });
         });
     };
 
-    let presetValue = (value) => {
-        editor.setValue(value);
-        editor.revealPosition({ lineNumber: 1, column: 1 });
-        editor.focus();
-        hasEdited = false;
-    };
+    document.querySelector("#reset-button").addEventListener('click', (event) => {
+        event.preventDefault();
+        reset();
+    });
 
-    // ----- sync scroll position -----
-
-    let initScrollBarSync = (settings) => {
-        let checkbox = document.querySelector('#sync-scroll-checkbox');
-        checkbox.checked = settings;
-        scrollBarSync = settings;
-
-        checkbox.addEventListener('change', (event) => {
-            let checked = event.currentTarget.checked;
-            scrollBarSync = checked;
-            saveScrollBarSettings(checked);
-        });
-    };
-
-    // ----- preview CSS loader (switch github-markdown css) -----
-    const PREVIEW_CSS_LIGHT = 'css/github-markdown-light.css?v=1.11.0';
-    const PREVIEW_CSS_DARK = 'css/github-markdown-dark_dimmed.css?v=1.11.0';
-
-    let setPreviewCss = (useDark) => {
-        const link = document.getElementById('gh-markdown-link');
-        if (!link) {
-            // fallback: create link element
-            const newLink = document.createElement('link');
-            newLink.id = 'gh-markdown-link';
-            newLink.rel = 'stylesheet';
-            newLink.href = useDark ? PREVIEW_CSS_DARK : PREVIEW_CSS_LIGHT;
-            document.head.appendChild(newLink);
-            return;
-        }
-
-        // Only update if href differs to avoid unnecessary reload
-        const desired = useDark ? PREVIEW_CSS_DARK : PREVIEW_CSS_LIGHT;
-        if (link.getAttribute('href') !== desired) {
-            link.setAttribute('href', desired);
-        }
-    };
-
-    // ----- theme toggle (dark/light) -----
-    let setTheme = (enabled) => {
-        document.documentElement.setAttribute('data-theme', enabled ? 'dark' : 'light');
-    };
-
-    let initThemeToggle = (settings) => {
-        let checkbox = document.querySelector('#theme-checkbox');
-        if (!checkbox) return;
-        checkbox.checked = settings;
-        setTheme(settings);
-
-        // set Monaco editor theme to match page theme
-        if (monaco && monaco.editor && typeof monaco.editor.setTheme === 'function') {
-            monaco.editor.setTheme(settings ? 'vs-dark' : 'vs');
-        }
-        // set preview css to match theme
-        setPreviewCss(settings);
-
-        checkbox.addEventListener('change', (event) => {
-            let checked = event.currentTarget.checked;
-            setTheme(checked);
-            saveThemeSettings(checked);
-            setPreviewCss(checked);
-            if (monaco && monaco.editor && typeof monaco.editor.setTheme === 'function') {
-                monaco.editor.setTheme(checked ? 'vs-dark' : 'vs');
-            }
-            renderMermaidDiagrams();
-        });
-    };
-
-    let enableScrollBarSync = () => {
-        scrollBarSync = true;
-    };
-
-    let disableScrollBarSync = () => {
-        scrollBarSync = false;
-    };
-
-    // ----- clipboard utils -----
-
+    // ----- Copy button -----
     let copyToClipboard = (text, successHandler, errorHandler) => {
         navigator.clipboard.writeText(text).then(
-            () => {
-                successHandler();
-            },
-
-            () => {
-                errorHandler();
-            }
+            () => { successHandler(); },
+            () => { errorHandler(); }
         );
     };
 
@@ -378,39 +238,40 @@ This web site is using ${"`"}markedjs/marked${"`"}.
         labelElement.innerHTML = "Copied!";
         setTimeout(() => {
             labelElement.innerHTML = "Copy";
-        }, 1000)
+        }, 1000);
     };
 
-    // ----- export preview -----
+    document.querySelector("#copy-button").addEventListener('click', (event) => {
+        event.preventDefault();
+        let value = getValue(editor);
+        copyToClipboard(value, () => {
+            notifyCopied();
+        }, () => {});
+    });
+
+    // ----- Export PDF -----
+    const PREVIEW_CSS_LIGHT = 'css/github-markdown-light.css?v=1.11.0';
+    const PREVIEW_CSS_DARK = 'css/github-markdown-dark_dimmed.css?v=1.11.0';
 
     let exportLightCssPromise = null;
 
     let getLightMarkdownCss = () => {
-        if (exportLightCssPromise) {
-            return exportLightCssPromise;
-        }
-
+        if (exportLightCssPromise) return exportLightCssPromise;
         exportLightCssPromise = fetch(PREVIEW_CSS_LIGHT)
             .then((response) => {
-                if (!response.ok) {
-                    throw new Error(`Failed to load export CSS: ${response.status}`);
-                }
+                if (!response.ok) throw new Error(`Failed to load export CSS: ${response.status}`);
                 return response.text();
             })
             .catch((error) => {
-                // eslint-disable-next-line no-console
                 console.error('Failed to load light markdown CSS', error);
                 return '';
             });
-
         return exportLightCssPromise;
     };
 
     let exportPreviewToPdf = () => {
         const previewElement = document.querySelector('#preview-wrapper');
-        if (!previewElement) {
-            return;
-        }
+        if (!previewElement) return;
 
         if (typeof window.html2pdf !== 'function') {
             window.alert('PDF export is not available yet. Please try again in a moment.');
@@ -471,7 +332,6 @@ This web site is using ${"`"}markedjs/marked${"`"}.
                 .from(previewElement)
                 .save()
                 .catch((error) => {
-                    // eslint-disable-next-line no-console
                     console.error('Failed to export PDF', error);
                 })
                 .finally(() => {
@@ -482,68 +342,82 @@ This web site is using ${"`"}markedjs/marked${"`"}.
         });
     };
 
-    // ----- setup -----
+    document.querySelector('#export-button').addEventListener('click', (event) => {
+        event.preventDefault();
+        exportPreviewToPdf();
+    });
 
-    // setup navigation actions
-    let setupResetButton = () => {
-        document.querySelector("#reset-button").addEventListener('click', (event) => {
-            event.preventDefault();
-            reset();
+    // ----- Scroll sync -----
+    let initScrollBarSync = (settings) => {
+        let checkbox = document.querySelector('#sync-scroll-checkbox');
+        checkbox.checked = settings;
+        scrollBarSync = settings;
+
+        checkbox.addEventListener('change', (event) => {
+            let checked = event.currentTarget.checked;
+            scrollBarSync = checked;
+            saveScrollBarSettings(checked);
         });
     };
 
-    let setupCopyButton = (editor) => {
-        document.querySelector("#copy-button").addEventListener('click', (event) => {
-            event.preventDefault();
-            let value = editor.getValue();
-            copyToClipboard(value, () => {
-                notifyCopied();
-            },
-                () => {
-                    // nothing to do
-                });
-        });
-    };
-
-    let setupExportButton = () => {
-        const exportButton = document.querySelector('#export-button');
-        if (!exportButton) {
+    // ----- Preview CSS -----
+    let setPreviewCss = (useDark) => {
+        const link = document.getElementById('gh-markdown-link');
+        if (!link) {
+            const newLink = document.createElement('link');
+            newLink.id = 'gh-markdown-link';
+            newLink.rel = 'stylesheet';
+            newLink.href = useDark ? PREVIEW_CSS_DARK : PREVIEW_CSS_LIGHT;
+            document.head.appendChild(newLink);
             return;
         }
-        exportButton.addEventListener('click', (event) => {
-            event.preventDefault();
-            exportPreviewToPdf();
+        const desired = useDark ? PREVIEW_CSS_DARK : PREVIEW_CSS_LIGHT;
+        if (link.getAttribute('href') !== desired) {
+            link.setAttribute('href', desired);
+        }
+    };
+
+    // ----- Theme toggle -----
+    let setPageTheme = (enabled) => {
+        document.documentElement.setAttribute('data-theme', enabled ? 'dark' : 'light');
+    };
+
+    let initThemeToggle = (settings) => {
+        let checkbox = document.querySelector('#theme-checkbox');
+        if (!checkbox) return;
+        checkbox.checked = settings;
+        setPageTheme(settings);
+
+        if (isMonacoAvailable()) {
+            setTheme(editor, settings);
+        }
+        setPreviewCss(settings);
+
+        checkbox.addEventListener('change', (event) => {
+            let checked = event.currentTarget.checked;
+            setPageTheme(checked);
+            saveThemeSettings(checked);
+            setPreviewCss(checked);
+            if (isMonacoAvailable()) {
+                setTheme(editor, checked);
+            }
+            renderMermaidDiagrams();
         });
     };
 
-    // ----- local state -----
-
-    let loadLastContent = () => {
-        let lastContent = Storehouse.getItem(localStorageNamespace, localStorageKey);
-        return lastContent;
-    };
-
-    let saveLastContent = (content) => {
-        let expiredAt = new Date(2099, 1, 1);
-        Storehouse.setItem(localStorageNamespace, localStorageKey, content, expiredAt);
-    };
-
+    // ----- Local state (theme & scroll sync) -----
     let loadScrollBarSettings = () => {
-        let lastContent = Storehouse.getItem(localStorageNamespace, localStorageScrollBarKey);
-        return lastContent;
+        return Storehouse.getItem(localStorageNamespace, localStorageScrollBarKey);
     };
 
     let loadThemeSettings = () => {
         let last = Storehouse.getItem(localStorageNamespace, localStorageThemeKey);
         if (last === null || last === undefined) {
             try {
-                // fallback to raw localStorage boot key used by inline script
                 const raw = localStorage.getItem('com.markdownlivepreview_theme');
                 if (raw === 'dark') return true;
                 if (raw === 'light') return false;
-            } catch (e) {
-                // ignore
-            }
+            } catch (e) { /* ignore */ }
         }
         return last;
     };
@@ -558,11 +432,10 @@ This web site is using ${"`"}markedjs/marked${"`"}.
         Storehouse.setItem(localStorageNamespace, localStorageThemeKey, settings, expiredAt);
         try {
             localStorage.setItem('com.markdownlivepreview_theme', settings ? 'dark' : 'light');
-        } catch (e) {
-            // ignore storage errors
-        }
+        } catch (e) { /* ignore storage errors */ }
     };
 
+    // ----- Split divider -----
     let setupDivider = () => {
         let lastLeftRatio = 0.5;
         const divider = document.getElementById('split-divider');
@@ -577,9 +450,7 @@ This web site is using ${"`"}markedjs/marked${"`"}.
         });
 
         divider.addEventListener('mouseleave', () => {
-            if (!isDragging) {
-                divider.classList.remove('hover');
-            }
+            if (!isDragging) divider.classList.remove('hover');
         });
 
         divider.addEventListener('mousedown', () => {
@@ -606,7 +477,6 @@ This web site is using ${"`"}markedjs/marked${"`"}.
             const offsetX = e.clientX - containerRect.left;
             const dividerWidth = divider.offsetWidth;
 
-            // Prevent overlap or out-of-bounds
             const minWidth = 100;
             const maxWidth = totalWidth - minWidth - dividerWidth;
             const leftWidth = Math.max(minWidth, Math.min(offsetX, maxWidth));
@@ -639,24 +509,10 @@ This web site is using ${"`"}markedjs/marked${"`"}.
         });
     };
 
-    // ----- entry point -----
-    let lastContent = loadLastContent();
-    let editor = setupEditor();
-    if (lastContent) {
-        presetValue(lastContent);
-    } else {
-        presetValue(defaultInput);
-    }
-    setupResetButton();
-    setupCopyButton(editor);
-    setupExportButton();
-
     let scrollBarSettings = loadScrollBarSettings() || false;
     initScrollBarSync(scrollBarSettings);
 
-    // initialize theme (dark/light)
     let themeSettings = loadThemeSettings();
-    // normalize to boolean (Storehouse may return string or boolean)
     if (themeSettings === 'true' || themeSettings === true) {
         themeSettings = true;
     } else {
