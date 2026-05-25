@@ -223,10 +223,10 @@ async function handleContextMenu(nodeId, x, y) {
                     : null;
             }
             saveFileSystem(currentState);
-            refreshTree();
             if (isOpenFile && onFileSelectCallback && nextFile) {
                 onFileSelectCallback(nextFile, currentState);
             }
+            refreshTree();
             if (onTreeChangeCallback) onTreeChangeCallback(currentState);
             break;
         }
@@ -315,8 +315,8 @@ function handleKeydown(e) {
             ? currentState.nodes[nextFile]?.parentId || null
             : null;
         saveFileSystem(currentState);
-        refreshTree();
         if (onFileSelectCallback && nextFile) onFileSelectCallback(nextFile, currentState);
+        refreshTree();
         if (onTreeChangeCallback) onTreeChangeCallback(currentState);
     }
 }
