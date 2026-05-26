@@ -8,9 +8,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
+    "preview": "npm run build && wrangler dev",
     "serve-dist": "http-server dist -p 5001 -c-1",
-    "build-and-serve": "npm run build && npm run serve-dist"
+    "build-and-serve": "npm run build && npm run serve-dist",
+    "deploy": "npm run build && wrangler deploy"
   },
   "repository": {
     "type": "git",
@@ -24,8 +25,10 @@
   },
   "homepage": "https://github.com/tanabe/markdown-live-preview#readme",
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.38.0",
     "http-server": "^14.1.1",
-    "vite": "^6.4.2"
+    "vite": "^6.4.2",
+    "wrangler": "^4.94.0"
   },
   "dependencies": {
     "dompurify": "^3.4.0",
